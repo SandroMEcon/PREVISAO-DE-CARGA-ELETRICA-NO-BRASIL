@@ -1,0 +1,399 @@
+---
+title: "VAR"
+author: "Sandro Mendes de Oliveira"
+date: '2022-08-31'
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pacotes, include=FALSE}
+
+#Para o cálculo de momentos estatísticos
+if(!require(fBasics)) {install.packages("fBasics")}
+require(fBasics)
+
+#Para plotar gr[aficos]
+if(!require(plotly)) {install.packages("plotly")}
+require(plotly)
+
+if(!require(dplyr)) {install.packages("dplyr")}
+require(dplyr)
+
+if(!require(tidyr)) {install.packages("tidyr")}
+require(tidyr)
+
+if(!require(htmltools)) {install.packages("htmltools")}
+require(htmltools)
+
+if(!require(forecast)){install.packages("forecast")}
+require(forecast)
+
+if(!require(urca)){install.packages("urca")}
+require(urca)
+
+if(!require(vars)){install.packages("vars")}
+require(vars)
+
+if(!require(webshot)){install.packages("webshot")}
+require(webshot)
+
+if(!require(htmlwidgets)){install.packages("htmlwidgets")}
+require(htmlwidgets)
+
+if(!require(ARDL)){install.packages("ARDL")}
+require(ARDL)
+
+if(!require(strucchange)){install.packages("strucchange")}
+require(strucchange)
+
+if(!require(xts)){install.packages("xts")}
+require(xts)
+
+if(!require(tmvnsim)){install.packages("tmvnsim")}
+require(tmvnsim)
+
+if(!require(tsDyn)){install.packages("tsDyn")}
+require(tsDyn)
+
+if(!require(aTSA)){install.packages("aTSA")}
+require(aTSA)
+
+if(!require(tseries)){install.packages("tseries")}
+require(tseries)
+
+```
+
+
+# Importar dados
+```{r}
+
+dados<-read.csv("C:/Users/Sandro/Desktop/Mestrado/Dissertação/Dados/Dados consolidados/dados_consolidados_2.csv")
+
+
+```
+
+```{r}
+
+head(dados)
+
+```
+
+
+```{r, echo=FALSE}
+train_set<-filter(dados,T>31)%>%filter(T<212)
+test_set<-filter(dados,T>211)
+cat('Train_set tem comprimento', dim(train_set)[1],' e corresponde a ',100*dim(train_set)[1]/dim(filter(dados,T>31))[1],'% do total do dataset a ser utilizado.','\n','Test_set tem comprimento', dim(test_set)[1],' e corresponde a ',100*dim(test_set)[1]/dim(filter(dados,T>31))[1],'% do total do dataset a ser utilizado.')
+
+
+```
+#Modelo sem sazonalidade e sem variáveis exógenas
+
+## Verificar o número de lags
+
+```{r}
+
+x = cbind(train_set$log_carga,train_set$log_PIBc) #monta um data.frame com as duas variáveis
+colnames(x)<-c("log_carga","log_PIB")
+lag<-VARselect(x, lag.max = 15, type ="trend")#,season=12)$selection
+lag$selection
+
+```
+
+```{r, echo=FALSE}
+var_mod <- VAR(x, min(lag$selection), type='const')
+
+var_mod
+```
+
+## Teste de cointegração de Engle-Granger
+```{r, echo=FALSE}
+resid<-residuals(var_mod)
+egtest<-ur.df(resid[,1], lags = 13, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+
+egtest<-ur.df(resid[,2], lags = 13, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+```
+
+##Criar VECM
+```{r}
+jt <- ca.jo(x, type = "eigen", ecdet = "none", spec ="longrun", K = min(lag$selection))#,season=12)
+summary(jt)
+
+```
+
+```{r}
+cajorls_mod1<-cajorls(jt,r=1)
+cajorls_mod1
+
+```
+
+## Teste de Causalidade de Granger e de estabilidade do modelo
+```{r}
+#para testar causalidade de granger e estabilidade do modelo vou estimar um var em diferenças com o termo de correção de erros como variável exógena
+
+gc_data<-cbind(train_set$lcg_1st_diff[14:180],train_set$lPIBc_1diff[14:180])
+colnames(gc_data)<-c("lcg_1st_diff","lPIBc_1diff")
+
+ect1<-cajorls_mod1$rlm$model['ect1'][,1]
+
+
+var_cgtest<-VAR(gc_data, 12, type='const',exogen=ect1)
+
+
+plot(stability(var_cgtest))
+
+
+causality(var_cgtest,'lcg_1st_diff')
+causality(var_cgtest,'lPIBc_1diff')
+
+```
+
+## Tranformando o VECM em um VAR
+```{r}
+
+#para realizar previsões tenho que transformar o VECM em um VAR esse será o modelo final sem sazonalidade e variáveis exógenas
+
+v2v_mod1<-vec2var(jt, r=1)
+v2v_mod1
+```
+
+## Realizando previsões fora da amostra
+```{r}
+fh<-length(test_set$carga)
+
+preds<-predict(v2v_mod1,n.ahead=fh)
+preds_1<-cbind(exp(preds$fcst$log_carga[,1]),exp(preds$fcst$log_PIB[,1]))
+colnames(preds_1)<-c("carga","PIB")
+
+p_preds1_cg<-autoplot(ts(preds_1[,1]),ylab = colnames(test_set$carga), series = "Previsão cg")+autolayer(ts(test_set$carga), series = colnames(test_set$carga))+ ggtitle(paste(colnames(test_set$carga),": VECM - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_preds1_cg
+
+p_preds1_pib<-autoplot(ts(preds_1[,2]),ylab = colnames(test_set$PIB_constantes), series = "Previsão PIB")+autolayer(ts(test_set$PIB_constantes), series = colnames(test_set$PIB_constantes))+ ggtitle(paste(colnames(test_set$PIB_constantes),": VECM - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_preds1_pib
+
+write.csv(preds_1,"Rforecasts/VARpreds1.csv", row.names = FALSE)
+
+
+```
+
+```{r Acurácia um passo à frente, echo=FALSE}
+oos_acc_vecm1<-rbind(accuracy(preds_1[,1],test_set$carga),accuracy(preds_1[,2],test_set$PIB_constantes))
+row.names(oos_acc_vecm1)<-c("log_carga","log_PIB")
+oos_acc_vecm1
+```
+
+## Teste de autocorrelação dos resíduos
+```{r , echo=FALSE}
+Box.test(residuals(v2v_mod1)[,1], type = c("Ljung-Box"))
+```
+
+#Modelo com sazonalidade 
+
+```{r}
+x = cbind(train_set$log_carga,train_set$log_PIBc) #monta um data.frame com as duas variáveis
+colnames(x)<-c("log_carga","log_PIB")
+lag2<-VARselect(x, lag.max = 15, type ="const",season=12)
+lag2$selection
+
+```
+
+
+```{r, echo=FALSE}
+var_mod2 <- VAR(x, min(lag2$selection), type='const',season=12)
+resid<-residuals(var_mod2)
+egtest<-ur.df(resid[,1], lags = 13, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+
+egtest<-ur.df(resid[,2], lags = 13, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+```
+
+
+
+```{r}
+jt <- ca.jo(x, type = "eigen", ecdet = "none", spec ="longrun", K = min(lag2$selection),season=12)
+summary(jt)
+
+```
+
+
+```{r}
+cajorls_mod2<-cajorls(jt,r=1)
+cajorls_mod2
+
+```
+```{r}
+
+
+gc_data<-cbind(train_set$lcg_1st_diff[3:180],train_set$lPIBc_1diff[3:180])
+colnames(gc_data)<-c("lcg_1st_diff","lPIBc_1diff")
+
+ect1<-cajorls_mod2$rlm$model['ect1'][,1]
+
+
+var_sttest<-VAR(gc_data, 1, type='const',exogen=ect1,season=12)
+
+
+plot(stability(var_sttest))
+
+
+```
+
+
+```{r}
+v2v_mod2<-vec2var(jt, r=1)
+v2v_mod2
+```
+
+```{r}
+fh<-length(test_set$carga)
+
+preds<-predict(v2v_mod2,n.ahead=fh)
+preds_1<-cbind(exp(preds$fcst$log_carga[,1]),exp(preds$fcst$log_PIB[,1]))
+colnames(preds_1)<-c("carga","PIB")
+
+p_preds1_cg<-autoplot(ts(preds_1[,1]),ylab = colnames(test_set$carga), series = "Previsão cg")+autolayer(ts(test_set$carga), series = colnames(test_set$carga))+ ggtitle(paste(colnames(test_set$carga),": VECM - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_preds1_cg
+
+p_preds1_pib<-autoplot(ts(preds_1[,2]),ylab = colnames(test_set$PIB_constantes), series = "Previsão PIB")+autolayer(ts(test_set$PIB_constantes), series = colnames(test_set$PIB_constantes))+ ggtitle(paste(colnames(test_set$PIB_constantes),": VECM - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_preds1_pib
+
+write.csv(preds_1,"Rforecasts/VARpreds2.csv", row.names = FALSE)
+
+
+```
+
+```{r Acurácia um passo à frente 2, echo=FALSE}
+oos_acc_vecm1<-rbind(accuracy(preds_1[,1],test_set$carga),accuracy(preds_1[,2],test_set$PIB_constantes))
+row.names(oos_acc_vecm1)<-c("log_carga","log_PIB")
+oos_acc_vecm1
+```
+
+
+
+```{r , echo=FALSE}
+Box.test(residuals(v2v_mod2)[,1], type = c("Ljung-Box"))
+```
+
+# Modelo com variáveis meteorológicas (exógenas)
+
+
+```{r}
+
+x = cbind(train_set$log_carga,train_set$log_PIBc) #monta um data.frame com as duas variáveis
+colnames(x)<-c("log_carga","log_PIB")
+exo = ts(cbind(train_set$PRECIPITACAO,train_set$RAD_GLOBAL,train_set$TEMP_AR,train_set$VELOC_VENTO),frequency=12) 
+
+colnames(exo)<-c("Precip","rad","temp","vento")
+
+
+```
+
+```{r}
+lag3<-VARselect(x, lag.max = 15,exogen=exo)
+lag3$selection
+```
+
+
+```{r, echo=FALSE}
+var3 <- VAR(x, min(lag3$selection), type='const',exogen=exo)
+var3
+
+```
+
+
+```{r, echo=FALSE}
+resid<-residuals(var3)
+egtest<-ur.df(resid[,1], lags = 13, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+
+egtest<-ur.df(resid[,2], lags = 13, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+```
+
+## Estimar VECM com biblioteca tsDyn
+```{r}
+
+if(!require(bvartools)){install.packages("bvartools")}
+require(bvartools)
+
+
+if(!require(tsDyn)){install.packages("tsDyn")}
+require(tsDyn)
+
+```
+
+```{r}
+x<-ts(x,frequency=12)
+
+vecm3 <- VECM(x, lag = min(lag3$selection),  include = "const", estim = "ML", exogen = exo)
+
+vecm3
+```
+
+```{r}
+
+
+gc_data<-cbind(train_set$lcg_1st_diff[3:180],train_set$lPIBc_1diff[3:180])
+colnames(gc_data)<-c("lcg_1st_diff","lPIBc_1diff")
+
+exotest<-ts(cbind(vecm3$model.x[,1],train_set$PRECIPITACAO[3:180],train_set$RAD_GLOBAL[3:180],
+                        train_set$TEMP_AR[3:180],train_set$VELOC_VENTO[3:180]),frequency=12)
+
+colnames(exotest)<-c("ect1","Precip","rad","temp","vento")
+var_sttest<-VAR(gc_data, 13, type='const',exogen=exotest,season=12)
+
+
+plot(stability(var_sttest))
+
+
+```
+
+
+```{r}
+fh<-length(test_set$carga)
+exo2 = ts(cbind(test_set$PRECIPITACAO,test_set$RAD_GLOBAL,test_set$TEMP_AR,test_set$VELOC_VENTO),frequency=12) 
+
+colnames(exo2)<-c("Precip","rad","temp","vento")
+
+preds<-predict(vecm3,exoPred = exo2,n.ahead=fh)
+preds_1<-cbind(exp(preds[,1]),exp(preds[,2]))
+colnames(preds_1)<-c("carga","PIB")
+
+p_preds1_cg<-autoplot(ts(preds_1[,1]),ylab = colnames(test_set$carga), series = "Previsão cg")+autolayer(ts(test_set$carga), series = colnames(test_set$carga))+ ggtitle(paste(colnames(test_set$carga),": VECM - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_preds1_cg
+
+p_preds1_pib<-autoplot(ts(preds_1[,2]),ylab = colnames(test_set$PIB_constantes), series = "Previsão PIB")+autolayer(ts(test_set$PIB_constantes), series = colnames(test_set$PIB_constantes))+ ggtitle(paste(colnames(test_set$PIB_constantes),": VECM - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_preds1_pib
+
+write.csv(preds_1,"Rforecasts/VARpreds3.csv", row.names = FALSE)
+
+```
+
+```{r Acurácia um passo à frente 3, echo=FALSE}
+oos_acc_vecm1<-rbind(accuracy(preds_1[,1],test_set$carga),accuracy(preds_1[,2],test_set$PIB_constantes))
+row.names(oos_acc_vecm1)<-c("log_carga","log_PIB")
+oos_acc_vecm1
+```
+
+
+
+```{r , echo=FALSE}
+Box.test(residuals(vecm3)[,1], type = c("Ljung-Box"))
+```
+
+
+

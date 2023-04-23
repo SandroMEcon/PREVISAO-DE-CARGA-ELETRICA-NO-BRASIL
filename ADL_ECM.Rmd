@@ -1,0 +1,383 @@
+---
+title: "Modelos ADL-ECM"
+author: "Sandro Mendes de Oliveira"
+date: '2022-08-31'
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pacotes, include=FALSE}
+
+if(!require(fBasics)) {install.packages("fBasics")}
+require(fBasics)
+
+if(!require(plotly)) {install.packages("plotly")}
+require(plotly)
+
+if(!require(dplyr)) {install.packages("dplyr")}
+require(dplyr)
+
+if(!require(htmltools)) {install.packages("htmltools")}
+require(htmltools)
+
+if(!require(forecast)){install.packages("forecast")}
+require(forecast)
+
+if(!require(urca)){install.packages("urca")}
+require(urca)
+
+if(!require(vars)){install.packages("vars")}
+require(vars)
+
+if(!require(webshot)){install.packages("webshot")}
+require(webshot)
+
+if(!require(htmlwidgets)){install.packages("htmlwidgets")}
+require(htmlwidgets)
+
+if(!require(ARDL)){install.packages("ARDL")}
+require(ARDL)
+
+if(!require(strucchange)){install.packages("strucchange")}
+require(strucchange)
+
+if(!require(xts)){install.packages("xts")}
+require(xts)
+
+if(!require(dLagM)){install.packages("dLagM")}
+require(dLagM)
+```
+
+```{r, importar dados}
+#importação dos dados
+dados<-read.csv("C:/Users/Sandro/Desktop/Mestrado/Dissertação/Dados/Dados consolidados/dados_consolidados_2.csv")
+
+
+```
+
+```{r, dados}
+
+head(dados)
+
+```
+
+
+```{r, echo=FALSE}
+
+#criando conjunto de treinos e teste
+
+train_set<-filter(dados,T>31)%>%filter(T<212)
+test_set<-filter(dados,T>211)
+cat('Train_set tem comprimento', dim(train_set)[1],' e corresponde a ',100*dim(train_set)[1]/dim(filter(dados,T>31))[1],'% do total do dataset a ser utilizado.','\n','Test_set tem comprimento', dim(test_set)[1],' e corresponde a ',100*dim(test_set)[1]/dim(filter(dados,T>31))[1],'% do total do dataset a ser utilizado.')
+
+cat()
+
+```
+
+# Escolhendo o modelo ARDL com a melhor defasagem pelo critério BIC
+
+```{r, echo=FALSE,warning=FALSE}
+
+best_ardl <- auto_ardl(log_carga~log_PIBc, data = train_set, max_order = 12,selection = "BIC")
+best_ardl$top_orders
+```
+
+##treinando o modelo ARDL
+```{r, echo=FALSE}
+
+best_ardl_mod<- best_ardl$best_model
+cat("O melhor modelo ARDL, selecionado por meio do critério BIC(SIC) é o de ordem ",best_ardl_mod$order,"\n")
+summary(best_ardl_mod)
+
+```
+
+## Teste de cointegração de Engle-Granger
+
+```{r, echo=FALSE}
+
+resid<-best_ardl_mod$residuals
+egtest<-ur.df(resid, lags = 12, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+```
+## verificar autocorrelação dos resíduos
+```{r, echo=FALSE}
+
+#erros do modelo
+checkresiduals(ets(best_ardl_mod$residuals))
+
+```
+
+# Escolhendo o modelo ARDL com a melhor defasagem pelo critério AIC
+
+```{r, echo=FALSE,warning=FALSE}
+
+best_ardl <- auto_ardl(log_carga~log_PIBc, data = train_set, max_order = 15,selection = "AIC")
+best_ardl$top_orders
+```
+
+```{r, echo=FALSE}
+
+best_ardl_mod<- best_ardl$best_model
+cat("O melhor modelo ARDL, selecionado por meio do critério AIC é o de ordem ",best_ardl_mod$order,"\n")
+summary(best_ardl_mod)
+
+```
+
+## Teste de cointegração
+
+
+
+```{r, echo=FALSE}
+
+resid<-best_ardl_mod$residuals
+egtest<-ur.df(resid, lags = 12, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+```
+
+## Estimar modelo de correção de erros
+
+```{r, echo=FALSE}
+
+adl_ecm1<-uecm(best_ardl_mod)
+summary(adl_ecm1)
+
+
+```
+## verificar autocorrelação dos resíduos
+```{r, echo=FALSE}
+
+#erros do modelo
+checkresiduals(ets(adl_ecm1$residuals))
+
+
+```
+
+## Teste de estabilidade do modelo
+```{r}
+
+bounds_test<-ardlBound(formula=log_carga~log_PIBc, data = train_set,  case=2, p =12,  ic="AIC")
+
+bounds_test$stability
+
+```
+
+## Realizando previsões um passo à frente
+
+```{r , echo=FALSE}
+
+BETA<-matrix(summary(adl_ecm1)$coefficients[,1],ncol=1)
+
+
+Y<-test_set$lcg_1st_diff[1:48]
+
+
+X<-matrix(c(rep(1,260),
+            lag(dados$log_carga,1),
+            lag(dados$log_PIBc,1),
+            lag(dados$lcg_1st_diff,1),
+            lag(dados$lcg_1st_diff,2),
+            lag(dados$lcg_1st_diff,3),
+            lag(dados$lcg_1st_diff,4),
+            lag(dados$lcg_1st_diff,5),
+            lag(dados$lcg_1st_diff,6),
+            lag(dados$lcg_1st_diff,7),
+            lag(dados$lcg_1st_diff,8),
+            lag(dados$lcg_1st_diff,9),
+            lag(dados$lcg_1st_diff,10),
+            lag(dados$lcg_1st_diff,11),
+            dados$lPIBc_1diff,
+            lag(dados$lPIBc_1diff,1),
+            lag(dados$lPIBc_1diff,2),
+            lag(dados$lPIBc_1diff,3),
+            lag(dados$lPIBc_1diff,4),
+            lag(dados$lPIBc_1diff,5),
+            lag(dados$lPIBc_1diff,6),
+            lag(dados$lPIBc_1diff,7),
+            lag(dados$lPIBc_1diff,8),
+            lag(dados$lPIBc_1diff,9),
+            lag(dados$lPIBc_1diff,10),
+            lag(dados$lPIBc_1diff,11)),
+          ncol=26)[213:260,]
+length(BETA)
+dim(X)
+Y_hat<-X%*%BETA
+  
+```
+
+```{r Gráfico da previsão um passo à frente, echo=FALSE}
+ 
+Y_hat <-ts(Y_hat)
+
+p_test_uecm<-autoplot(Y_hat,ylab = colnames(Y), series = "Previsão")+autolayer(ts(Y), series = colnames(Y))+ ggtitle(paste(colnames(Y),": ADL_ECM1 - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_test_uecm
+```
+
+## Transformar resultado em variável em nível
+```{r, echo=FALSE}
+
+for (i in 1:48){
+  Y_hat[i]<-train_set[180,3]*(1+Y_hat[i])
+}
+
+
+```
+
+```{r Gráfico da previsão um passo à frente_11, echo=FALSE}
+ 
+Y_hat <-ts(Y_hat)
+
+p_test_uecm<-autoplot(Y_hat,ylab = colnames(test_set$carga), series = "Previsão")+autolayer(ts(test_set$carga), series = colnames(test_set$carga))+ ggtitle(paste(colnames(test_set$carga),": ADL_ECM - Previsão Fora da Amostra em nível"))+guides(color=guide_legend("Séries"))
+p_test_uecm
+
+write.csv(Y_hat,"Rforecasts/ADLpreds1.csv", row.names = FALSE)
+```
+
+```{r Acurácia um passo à frente_12, echo=FALSE}
+oos_acc_uecm<-accuracy(Y_hat,test_set$carga)
+oos_acc_uecm
+```
+
+
+# Inserindo variáveis meteorológicas 
+```{r, echo=FALSE}
+train_set<-filter(dados,T>31)%>%filter(T<212)
+test_set<-filter(dados,T>211)
+cat('Train_set tem comprimento', dim(train_set)[1],' e corresponde a ',100*dim(train_set)[1]/dim(filter(dados,T>31))[1],'% do total do dataset a ser utilizado.','\n','Test_set tem comprimento', dim(test_set)[1],' e corresponde a ',100*dim(test_set)[1]/dim(filter(dados,T>31))[1],'% do total do dataset a ser utilizado.')
+
+cat()
+
+```
+
+
+### Escolhendo o modelo ARDL com a melhor defasagem pelo critério BIC
+
+```{r, echo=FALSE,warning=FALSE}
+
+best_ardl <- auto_ardl(log_carga~log_PIBc+PRECIPITACAO+RAD_GLOBAL+TEMP_AR+VELOC_VENTO, data = train_set, max_order = 12,selection = "BIC")
+best_ardl$top_orders
+```
+
+```{r, echo=FALSE,warning=FALSE}
+
+best_ardl <- auto_ardl(log_carga~log_PIBc+PRECIPITACAO+TEMP_AR, data = train_set, max_order = 12,selection = "BIC")
+best_ardl$top_orders
+```
+
+```{r, echo=FALSE}
+
+best_ardl_mod<- best_ardl$best_model
+cat("O melhor modelo ARDL, selecionado por meio do critério BIC(SIC) é o de ordem ",best_ardl_mod$order,"\n")
+summary(best_ardl_mod)
+
+```
+
+##Teste de cointegração
+
+```{r, echo=FALSE}
+
+resid<-best_ardl_mod$residuals
+egtest<-ur.df(resid, lags = 4, selectlags = "AIC", type = "drift")
+
+summary(egtest)
+```
+
+
+## Estimar modelo de correção de erros
+
+
+```{r, echo=FALSE}
+
+adl_ecm1<-uecm(best_ardl_mod)
+summary(adl_ecm1)
+
+
+```
+## Verificando autocorrelação dos resíduos
+```{r, echo=FALSE}
+
+#erros do modelo
+checkresiduals(ets(adl_ecm1$residuals))
+
+
+```
+
+## Teste de estabilidade do modelo
+```{r}
+
+bounds_test<-ardlBound(formula=log_carga~log_PIBc+PRECIPITACAO+TEMP_AR, data = train_set,  case=2, p =12,  ic="AIC")
+
+bounds_test$stability
+
+```
+
+## realizando previsões um passo à frente
+```{r , echo=FALSE}
+
+BETA<-matrix(summary(adl_ecm1)$coefficients[,1],ncol=1)
+
+
+Y<-test_set$lcg_1st_diff[1:48]
+
+
+X<-matrix(c(rep(1,260),
+            lag(dados$log_carga,1),
+            lag(dados$log_PIBc,1),
+            lag(dados$PRECIPITACAO,1),
+            lag(dados$TEMP_AR,1),
+            lag(dados$lcg_1st_diff,1),
+            lag(dados$lcg_1st_diff,2),
+            lag(dados$lcg_1st_diff,3),
+            dados$lPIBc_1diff,
+            lag(dados$lPIBc_1diff,1),
+            lag(dados$lPIBc_1diff,2),
+            lag(dados$lPIBc_1diff,3),
+            dados$PREC_ldiff,
+            dados$TEMP_ldiff),
+          ncol=14)[213:260,]
+
+Y_hat<-X%*%BETA
+
+
+```
+
+```{r Gráfico da previsão um passo à frente_9, echo=FALSE}
+ 
+Y_hat <-ts(Y_hat)
+
+p_test_uecm<-autoplot(Y_hat,ylab = colnames(Y), series = "Previsão")+autolayer(ts(Y), series = colnames(Y))+ ggtitle(paste(colnames(Y),": ADL_ECM1 - Previsão Fora da Amostra"))+guides(color=guide_legend("Séries"))
+p_test_uecm
+```
+
+### Transformar resultado em variável em nível
+```{r, echo=FALSE}
+
+for (i in 1:48){
+  Y_hat[i]<-train_set[180,3]*(1+Y_hat[i])
+}
+
+
+```
+
+```{r Gráfico da previsão um passo à frente_12, echo=FALSE}
+ 
+Y_hat <-ts(Y_hat)
+
+p_test_uecm<-autoplot(Y_hat,ylab = colnames(test_set$carga), series = "Previsão")+autolayer(ts(test_set$carga), series = colnames(test_set$carga))+ ggtitle(paste(colnames(test_set$carga),": ADL_ECM - Previsão Fora da Amostra em nível"))+guides(color=guide_legend("Séries"))
+p_test_uecm
+
+write.csv(Y_hat,"Rforecasts/ADLpreds2.csv", row.names = FALSE)
+```
+
+```{r Acurácia um passo à frente_13, echo=FALSE}
+oos_acc_uecm<-accuracy(Y_hat,test_set$carga)
+oos_acc_uecm
+```
+
